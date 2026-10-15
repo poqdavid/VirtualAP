@@ -859,6 +859,14 @@ provision_openwrt() {
     # A /64 from the router's ULA. Without a ULA or an IPv6 upstream this is
     # inert, so it is safe on an OpenWrt that has neither.
     ds_run uci set network.vaplan.ip6assign=64
+    # netifd numbers those /64s in interface-name order and renumbers them all
+    # whenever an interface is added, so any LAN that sorts before vaplan (the
+    # image's own Containers does) moves every hotspot client to a new subnet.
+    # Pin it to the IPv4 subnet's number, 192.168.42.1 gets <ula>:42::/64. A
+    # hint set by hand is kept, and a prefix too small for it makes netifd fall
+    # back to its own pick.
+    ds_run uci -q get network.vaplan.ip6hint >/dev/null 2>&1 ||
+        ds_run uci set network.vaplan.ip6hint="$($ECHO "$IP_GW" | $CUT -d. -f3)"
     ds_run uci commit network
 
     ds_run uci set dhcp.vaplan=dhcp
