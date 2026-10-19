@@ -163,11 +163,11 @@ EOF
 ds_run() { "$DROIDSPACES" -n "$CONTAINER" run "$@"; }
 
 # Running containers as "name=pid" lines, parsed from `droidspaces show
-# --format` JSON ({"running":[{"name":"X","pid":N,...},...]}). Each object is
+# --json` JSON ({"running":[{"name":"X","pid":N,...},...]}). Each object is
 # split onto its own line so a plain sed can pick the name/pid pair; no jq in
 # the chroot.
 ds_list() {
-    "$DROIDSPACES" show --format 2>/dev/null \
+    "$DROIDSPACES" show --json 2>/dev/null \
         | $TR '{' '\n' \
         | $SED -n 's/^"name":"\([^"]*\)","pid":\([0-9][0-9]*\).*/\1=\2/p'
 }
