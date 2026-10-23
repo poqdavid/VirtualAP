@@ -83,6 +83,11 @@ VAP_PORT="vaplan0"        # interface name inside the container
 # The LAN provisioned inside the container reuses the configured gateway/subnet
 # (IP_GW / IP_NET, default 192.168.42.1) - the same one routed mode uses, so a
 # custom -g gateway applies in both modes.
+# VAP_PORT is the clients' gateway, and a fresh veth gets a new random MAC on
+# every start. Windows keys its network profiles on the gateway's MAC, so it
+# files each start as a new network and makes it Public again. A MAC here is
+# kept across starts; empty leaves the random one.
+GW_MAC=""
 
 # Droidspaces CLI: prefer the install path, fall back to PATH.
 if [ -x "/data/local/Droidspaces/bin/droidspaces" ]; then
@@ -154,6 +159,7 @@ SECURITY='$(sq "$SECURITY")'
 PMF='$(sq "$PMF")'
 TTL_FIX='$(sq "$TTL_FIX")'
 CONTAINER='$(sq "$CONTAINER")'
+GW_MAC='$(sq "$GW_MAC")'
 EOF
 }
 
@@ -258,6 +264,31 @@ sta_channel() {
 reg_country() {
     "$IW" reg get 2>/dev/null \
         | $SED -n 's/^country \([A-Z][A-Z]\):.*/\1/p' | $HEAD -n1
+}
+
+# The Wi-Fi's factory MAC, what the app's Static MAC mode starts from: the
+# first of these that has it, empty when none do.
+#  1. Android's Wi-Fi service (11 and up) saves the factory MAC it read from
+#     the Wi-Fi HAL in its settings store, whatever the vendor or driver.
+#  2. wlan0's address, but only while the kernel says nobody changed it
+#     (addr_assign_type 0): Android gives wlan0 a random MAC per network.
+#  3. The kernel's permanent address, which newer iproute2 prints as permaddr.
+#  4. Samsung's copy in efs, which has no trailing newline and only the MAC
+#     in its first 17 characters.
+wifi_mac() {
+    local d="/sys/class/net/$PHY_IFACE" mac
+    mac=$($CAT /data/misc/apexdata/com.android.wifi/WifiConfigStore.xml \
+            /data/misc/wifi/WifiConfigStore.xml 2>/dev/null \
+        | $SED -n 's/.*"wifi_sta_factory_mac_address">\([0-9a-fA-F:]\{17\}\)<.*/\1/p' | $HEAD -n1)
+    # A HAL that could not read it answers with zeros.
+    [ "$mac" = "00:00:00:00:00:00" ] && mac=""
+    [ -z "$mac" ] && [ "$($CAT "$d/addr_assign_type" 2>/dev/null)" = "0" ] \
+        && mac=$($CAT "$d/address" 2>/dev/null)
+    [ -z "$mac" ] && mac=$("$IP" link show "$PHY_IFACE" 2>/dev/null \
+        | $SED -n 's/.* permaddr \([0-9a-fA-F:]*\).*/\1/p' | $HEAD -n1)
+    [ -z "$mac" ] && mac=$($CAT /efs/wifi/.mac.info /mnt/vendor/efs/wifi/.mac.info 2>/dev/null \
+        | $SED -n 's/^\([0-9a-fA-F:]\{17\}\).*/\1/p' | $HEAD -n1)
+    $ECHO "$mac" | $TR 'A-F' 'a-f'
 }
 
 is_dfs_channel() {
@@ -920,7 +951,7 @@ provision_openwrt() {
 
 # Wire ap0 -> VAP_BRIDGE -> veth -> container. No L3 on our side.
 config_network_bridged() {
-    local pid
+    local pid gw_mac
     pid=$(ds_container_pid "$CONTAINER")
     [ -z "$pid" ] && { error "Container '$CONTAINER' is not running."; return 1; }
     log "Managed mode: wiring $AP_IFACE to container '$CONTAINER' (PID $pid) via $VAP_BRIDGE."
@@ -949,6 +980,19 @@ config_network_bridged() {
         || { error "Failed to move veth into container netns"; return 1; }
     ds_run ip link set "$VAP_VETH_PEER" name "$VAP_PORT" \
         || { error "Failed to rename veth to $VAP_PORT inside container"; return 1; }
+    # Before the link comes up, so the random MAC is never seen on the LAN and
+    # an EUI-64 link-local address is built from this one.
+    if [ -n "$GW_MAC" ]; then
+        # ap0 is a port on the same bridge, and a bridge keeps frames for its
+        # ports' own MACs, so a gateway sharing ap0's would never see a client.
+        if [ "$($ECHO "$GW_MAC" | $TR 'A-F' 'a-f')" = "$($CAT "/sys/class/net/$AP_IFACE/address" 2>/dev/null)" ]; then
+            warn "The gateway MAC $GW_MAC is the hotspot radio's own, keeping a random one."
+        elif ds_run ip link set "$VAP_PORT" address "$GW_MAC"; then
+            log "Gateway MAC fixed at $GW_MAC."
+        else
+            warn "Could not set the gateway MAC to $GW_MAC, keeping a random one."
+        fi
+    fi
     ds_run ip link set "$VAP_PORT" up || warn "Could not bring up $VAP_PORT inside container."
 
     # The container owns L3. Auto-provision OpenWrt; otherwise hand it over.
@@ -959,10 +1003,14 @@ config_network_bridged() {
         log "configure it (assign an IP, run DHCP + NAT) on its own."
     fi
 
+    # Read back rather than assumed, so status shows the random one too.
+    gw_mac=$(ds_run cat "/sys/class/net/$VAP_PORT/address" 2>/dev/null)
+
     $CAT > "$STATE_FILE" <<EOF
 mode=bridged
 container=$CONTAINER
 bridge=$VAP_BRIDGE
+gw_mac=$gw_mac
 band=$BAND
 channel=$CHANNEL
 ssid=$SSID
@@ -1166,7 +1214,7 @@ cmd_status() {
     fi
     # gateway/ssid/etc. come from the state file (IP_GW in both routed + bridged)
     if [ -f "$STATE_FILE" ]; then
-        $GREP -E '^(ssid|band|channel|upstream|upstream_table|upstream_iface|gateway|dns_servers|container|started)=' "$STATE_FILE"
+        $GREP -E '^(ssid|band|channel|upstream|upstream_table|upstream_iface|gateway|gw_mac|dns_servers|container|started)=' "$STATE_FILE"
     else
         $ECHO "gateway=$IP_GW"
     fi
@@ -1207,6 +1255,7 @@ cmd_caps() {
     $ECHO "ht40=$ht40"
     $ECHO "vht=$vht"
     if ttl_supported; then $ECHO "ttl=1"; else $ECHO "ttl=0"; fi
+    $ECHO "mac=$(wifi_mac)"
 }
 
 # --- Main ---
@@ -1235,6 +1284,9 @@ print_usage() {
     $ECHO "                 1=on); forced on for wpa2wpa3, required for wpa3"
     $ECHO "  -K <container> Managed mode: hand the AP's LAN to a Droidspaces"
     $ECHO "                 container (it owns DHCP/DNS/NAT). Disables -o/-g/-d."
+    $ECHO "  -m <mac>       Managed mode: MAC of the container's LAN port, the"
+    $ECHO "                 clients' gateway (empty = a new random one on every"
+    $ECHO "                 start [default])."
     $ECHO "  -T <0|1>       TTL fix: forwarded packets leave with TTL 64, so they"
     $ECHO "                 look like the phone's own (0=off [default], 1=on)."
     $ECHO "                 Needs the kernel's TTL target; skipped when missing."
@@ -1248,7 +1300,7 @@ COMMAND="$1"
 # Saved config provides defaults; CLI flags override
 load_conf
 
-while getopts "s:p:o:b:c:W:w:g:d:H:A:M:K:T:h" opt 2>/dev/null; do
+while getopts "s:p:o:b:c:W:w:g:d:H:A:M:K:T:m:h" opt 2>/dev/null; do
     case $opt in
         s) SSID="$OPTARG" ;;
         p) PASSWORD="$OPTARG" ;;
@@ -1264,6 +1316,7 @@ while getopts "s:p:o:b:c:W:w:g:d:H:A:M:K:T:h" opt 2>/dev/null; do
         M) PMF="$OPTARG" ;;
         K) CONTAINER="$OPTARG" ;;
         T) TTL_FIX="$OPTARG" ;;
+        m) GW_MAC="$OPTARG" ;;
         h) print_usage; exit 0 ;;
         *) print_usage; exit 1 ;;
     esac
