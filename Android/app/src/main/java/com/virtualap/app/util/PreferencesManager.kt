@@ -109,6 +109,15 @@ class PreferencesManager private constructor(context: Context) {
         get() = prefs.getString(Constants.KEY_AP_CONTAINER, "") ?: ""
         set(value) { prefs.edit().putString(Constants.KEY_AP_CONTAINER, value).apply() }
 
+    // Managed-mode gateway MAC: random (a new one every start), persistent or static.
+    var apMacMode: String
+        get() = prefs.getString(Constants.KEY_AP_MAC_MODE, "random") ?: "random"
+        set(value) { prefs.edit().putString(Constants.KEY_AP_MAC_MODE, value).apply() }
+
+    var apGatewayMac: String
+        get() = prefs.getString(Constants.KEY_AP_GATEWAY_MAC, "") ?: ""
+        set(value) { prefs.edit().putString(Constants.KEY_AP_GATEWAY_MAC, value).apply() }
+
     var hasSeenRootCheck: Boolean
         get() = prefs.getBoolean(Constants.KEY_HAS_SEEN_ROOT_CHECK, false)
         set(value) { prefs.edit().putBoolean(Constants.KEY_HAS_SEEN_ROOT_CHECK, value).apply() }
@@ -127,7 +136,7 @@ class PreferencesManager private constructor(context: Context) {
         ssid: String, password: String, band: String, channel: String, width: String,
         upstream: String, gateway: String, dnsServers: String, hidden: Boolean,
         security: String, pmf: Boolean, ttlFix: Boolean, containerMode: Boolean,
-        container: String
+        container: String, macMode: String, gatewayMac: String
     ) {
         prefs.edit()
             .putString(Constants.KEY_AP_SSID, ssid)
@@ -144,6 +153,8 @@ class PreferencesManager private constructor(context: Context) {
             .putBoolean(Constants.KEY_AP_TTL_FIX, ttlFix)
             .putBoolean(Constants.KEY_AP_CONTAINER_MODE, containerMode)
             .putString(Constants.KEY_AP_CONTAINER, container)
+            .putString(Constants.KEY_AP_MAC_MODE, macMode)
+            .putString(Constants.KEY_AP_GATEWAY_MAC, gatewayMac)
             .apply()
     }
 

@@ -88,6 +88,16 @@
     <string name="ttl_fix_label">TTL fix</string>
     <string name="ttl_fix_desc">Send clients\' traffic with the same TTL as the phone\'s own, so the operator cannot tell it is tethered</string>
     <string name="ttl_fix_unsupported">Not supported by this kernel</string>
+    <string name="gateway_mac_label">Gateway MAC</string>
+    <string name="mac_mode_random">Random every start</string>
+    <string name="mac_mode_persistent">Random once</string>
+    <string name="mac_mode_static">Static MAC</string>
+    <string name="mac_address_label">MAC address</string>
+    <string name="mac_random_desc">A new one on every start, so connected devices see a new network each time. Shown here while the hotspot runs</string>
+    <string name="mac_persistent_desc">Picked at random once and kept. You can type your own</string>
+    <string name="mac_static_desc">Starts as this phone\'s own Wi-Fi MAC. You can type your own</string>
+    <string name="mac_static_unknown">Could not read this phone\'s Wi-Fi MAC, enter one</string>
+    <string name="mac_error">Enter a unicast MAC, e.g. 02:1a:2b:3c:4d:5e</string>
     <string name="gateway_ip_label">Gateway IP</string>
     <string name="gateway_ip_desc">Leave blank to use the default (192.168.42.1)</string>
     <string name="gateway_ip_placeholder">192.168.42.1</string>
