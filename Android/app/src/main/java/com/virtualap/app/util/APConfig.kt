@@ -1,5 +1,7 @@
 package com.virtualap.app.util
 
+import kotlin.random.Random
+
 /** The saved hotspot configuration, as the UI edits it and the tile reads it back. */
 data class APConfig(
     val ssid: String = "",
@@ -15,14 +17,20 @@ data class APConfig(
     val pmf: Boolean = false,        // Protected Management Frames (wpa2 only)
     val ttlFix: Boolean = false,     // forwarded packets leave with TTL 64
     val containerMode: Boolean = false,
-    val containerName: String = ""
+    val containerName: String = "",
+    val macMode: String = "random",  // random | persistent | static, managed mode only
+    val gatewayMac: String = ""      // the MAC persistent and static send
 ) {
     /** Open needs no passphrase; WPA (WPA-PSK/SAE) passphrases are 8-63 chars. */
     fun passwordValid(): Boolean = security == "open" || password.length in 8..63
 
+    /** Random mode sends no MAC; the other two need one the kernel will take. */
+    fun macValid(): Boolean = macMode == "random" || isValidMac(gatewayMac)
+
     /** Everything start-ap will reject on its own, checked before we shell out. */
     fun isValid(): Boolean =
-        ssid.isNotBlank() && passwordValid() && (!containerMode || containerName.isNotBlank())
+        ssid.isNotBlank() && passwordValid() &&
+            (!containerMode || (containerName.isNotBlank() && macValid()))
 
     companion object {
         /** Default AP/LAN gateway when the gateway field is left blank. */
@@ -43,8 +51,27 @@ data class APConfig(
             pmf = prefs.apPmf,
             ttlFix = prefs.apTtlFix,
             containerMode = prefs.apContainerMode,
-            containerName = prefs.apContainer
+            containerName = prefs.apContainer,
+            macMode = prefs.apMacMode,
+            gatewayMac = prefs.apGatewayMac
         )
+
+        private val macRegex = Regex("^[0-9A-Fa-f]{2}(:[0-9A-Fa-f]{2}){5}$")
+
+        /** Unicast and not all zeros, the two the kernel refuses on a veth. */
+        fun isValidMac(mac: String): Boolean =
+            macRegex.matches(mac) && (mac.substring(0, 2).toInt(16) and 1) == 0 &&
+                mac.any { it != '0' && it != ':' }
+
+        /**
+         * Locally administered and unicast: the 02 bit keeps it out of every
+         * vendor's range, and the kernel refuses a multicast one.
+         */
+        fun randomMac(): String {
+            val b = Random.nextBytes(6)
+            b[0] = (b[0].toInt() and 0xfc or 0x02).toByte()
+            return b.joinToString(":") { "%02x".format(it) }
+        }
 
         /** Widths the band can carry. 80 MHz only exists on 5 GHz. */
         fun widthsForBand(band: String): List<String> =

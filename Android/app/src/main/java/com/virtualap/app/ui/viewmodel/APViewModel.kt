@@ -35,6 +35,9 @@ class APViewModel(application: Application) : AndroidViewModel(application) {
     /** Live answer from the backend; the toggle is greyed out while false. */
     var ttlFixSupported by mutableStateOf(false)
         private set
+    /** The Wi-Fi's own MAC from the backend, what Static MAC starts from. Empty if unreadable. */
+    var deviceMac by mutableStateOf("")
+        private set
     var showActionLogs by mutableStateOf(false)
         private set
     /** False until the first status/interfaces/containers fetch completes, so
@@ -50,7 +53,8 @@ class APViewModel(application: Application) : AndroidViewModel(application) {
                 prefs.saveApConfig(
                     cfg.ssid, cfg.password, cfg.band, cfg.channel, cfg.width,
                     cfg.upstream, cfg.gateway, cfg.dnsServers, cfg.hidden,
-                    cfg.security, cfg.pmf, cfg.ttlFix, cfg.containerMode, cfg.containerName
+                    cfg.security, cfg.pmf, cfg.ttlFix, cfg.containerMode, cfg.containerName,
+                    cfg.macMode, cfg.gatewayMac
                 )
             }
         }
@@ -60,11 +64,13 @@ class APViewModel(application: Application) : AndroidViewModel(application) {
             val s = async { Hotspot.refresh() }
             val ifs = async { APManager.getInterfaces() }
             val cs = async { APManager.getContainers() }
-            val ttl = async { APManager.isTtlFixSupported() }
+            val caps = async { APManager.getCaps() }
             s.await()
             applyInterfaceList(ifs.await())
             applyContainerList(cs.await())
-            ttlFixSupported = ttl.await()
+            val c = caps.await()
+            ttlFixSupported = c["ttl"] == "1"
+            deviceMac = c["mac"].orEmpty()
             // A saved "on" from another kernel must not linger behind a greyed-out toggle.
             if (!ttlFixSupported && config.ttlFix) config = config.copy(ttlFix = false)
             isReady = true
@@ -140,6 +146,21 @@ class APViewModel(application: Application) : AndroidViewModel(application) {
 
     fun setPmf(value: Boolean) {
         config = config.copy(pmf = value)
+    }
+
+    /** Picking a mode fills the MAC box: a fresh random MAC for Random once, the
+     *  Wi-Fi's own for Static MAC. Picking the current mode again does nothing,
+     *  so a kept MAC never changes by accident. */
+    fun selectMacMode(mode: String) {
+        if (mode == config.macMode) return
+        config = config.copy(
+            macMode = mode,
+            gatewayMac = when (mode) {
+                "persistent" -> APConfig.randomMac()
+                "static" -> deviceMac
+                else -> ""
+            }
+        )
     }
 
     /** Open networks have no passphrase field; WPA modes show one. */

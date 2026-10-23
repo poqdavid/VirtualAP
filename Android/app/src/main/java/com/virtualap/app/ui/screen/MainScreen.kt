@@ -556,6 +556,68 @@ private fun AdvancedCard(vm: APViewModel) {
                 shape = fieldShape,
                 colors = DsTextFieldDefaults.colors()
             )
+        } else {
+            // Managed mode only: there the gateway is a veth made fresh on every
+            // start. In routed mode it is ap0, whose MAC belongs to the driver.
+            val macModes = mapOf(
+                "random" to stringResource(R.string.mac_mode_random),
+                "persistent" to stringResource(R.string.mac_mode_persistent),
+                "static" to stringResource(R.string.mac_mode_static)
+            )
+            DsDropdown(
+                label = stringResource(R.string.gateway_mac_label),
+                selected = vm.config.macMode,
+                options = macModes.keys.toList(),
+                displayName = { macModes[it] ?: it },
+                onSelect = { vm.selectMacMode(it) },
+                enabled = editable
+            )
+
+            // Random mode has nothing to edit: its MAC only exists once the
+            // hotspot runs. While running every mode shows the live one, which
+            // is the random one if the backend refused the saved MAC.
+            val random = vm.config.macMode == "random"
+            var macText by remember(vm.config.gatewayMac) { mutableStateOf(vm.config.gatewayMac) }
+            val macError = !random && !APConfig.isValidMac(macText.trim())
+            OutlinedTextField(
+                value = when {
+                    status.running -> status.gatewayMac ?: macText
+                    random -> ""
+                    else -> macText
+                },
+                onValueChange = { v ->
+                    macText = v
+                    if (APConfig.isValidMac(v.trim())) vm.config = vm.config.copy(gatewayMac = v.trim())
+                },
+                label = { Text(stringResource(R.string.mac_address_label)) },
+                supportingText = {
+                    when {
+                        macError && editable -> Text(
+                            stringResource(
+                                if (vm.config.macMode == "static" && macText.isBlank()) R.string.mac_static_unknown
+                                else R.string.mac_error
+                            ),
+                            color = MaterialTheme.colorScheme.error
+                        )
+                        random -> Text(stringResource(R.string.mac_random_desc))
+                        vm.config.macMode == "static" -> Text(stringResource(R.string.mac_static_desc))
+                        else -> Text(stringResource(R.string.mac_persistent_desc))
+                    }
+                },
+                isError = macError && editable,
+                leadingIcon = { Icon(Icons.Default.Fingerprint, contentDescription = null) },
+                trailingIcon = {
+                    if (macError && editable)
+                        Icon(Icons.Default.Error, contentDescription = null, tint = MaterialTheme.colorScheme.error)
+                },
+                singleLine = true,
+                readOnly = random,
+                enabled = editable,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Ascii, imeAction = ImeAction.Done),
+                modifier = Modifier.fillMaxWidth(),
+                shape = fieldShape,
+                colors = DsTextFieldDefaults.colors()
+            )
         }
 
         ToggleCard(

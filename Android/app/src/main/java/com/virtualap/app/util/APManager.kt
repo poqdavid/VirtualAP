@@ -21,7 +21,8 @@ data class APStatus(
     val upstreamTable: String? = null,
     val started: String? = null,
     val mode: String = "routed",        // "routed" or "bridged" (container-managed)
-    val container: String? = null       // target container name when bridged
+    val container: String? = null,      // target container name when bridged
+    val gatewayMac: String? = null      // the MAC the clients' gateway has, when bridged
 )
 
 data class NetworkIface(val name: String, val ip: String?)
@@ -57,7 +58,8 @@ object APManager {
             upstreamTable = kv["upstream_table"],
             started = kv["started"],
             mode = kv["mode"] ?: "routed",
-            container = kv["container"]
+            container = kv["container"],
+            gatewayMac = kv["gw_mac"]?.takeIf { it.isNotEmpty() }
         )
     }
 
@@ -67,10 +69,11 @@ object APManager {
         val pmfVal = if (cfg.pmf) "1" else "0"
         val ttlVal = if (cfg.ttlFix) "1" else "0"
         val gateway = cfg.gateway.ifBlank { APConfig.DEFAULT_GATEWAY }
-        // -K is always passed (empty clears managed mode) so a stale CONTAINER
-        // in ap.conf never silently re-enables it.
+        // -K and -m are always passed (empty clears them) so a stale CONTAINER
+        // or GW_MAC in ap.conf never silently comes back.
         val container = if (cfg.containerMode) cfg.containerName else ""
-        val cmd = "${Backend.startAp} start -s ${sq(cfg.ssid)} -p ${sq(cfg.password)} -o ${sq(cfg.upstream)} -b ${sq(cfg.band)} -c ${sq(cfg.channel)} -W ${sq(cfg.width)} -g ${sq(gateway)} -d ${sq(cfg.dnsServers)} -H $hiddenVal -A ${sq(cfg.security)} -M $pmfVal -K ${sq(container)} -T $ttlVal"
+        val mac = if (cfg.macMode == "random") "" else cfg.gatewayMac
+        val cmd = "${Backend.startAp} start -s ${sq(cfg.ssid)} -p ${sq(cfg.password)} -o ${sq(cfg.upstream)} -b ${sq(cfg.band)} -c ${sq(cfg.channel)} -W ${sq(cfg.width)} -g ${sq(gateway)} -d ${sq(cfg.dnsServers)} -H $hiddenVal -A ${sq(cfg.security)} -M $pmfVal -K ${sq(container)} -T $ttlVal -m ${sq(mac)}"
 
         Shell.cmd(cmd).to(logSink(logger)).exec().isSuccess
     }
@@ -98,12 +101,16 @@ object APManager {
     }
 
     /**
-     * Whether this kernel and its iptables can rewrite the TTL of forwarded
-     * packets. The backend finds out by trying the rule, so this is the live
-     * answer and not something read from a kernel config.
+     * The backend's `caps` lines as a map. ttl=1 when this kernel and its
+     * iptables can rewrite the TTL of forwarded packets; the backend finds out
+     * by trying the rule, so it is the live answer and not something read from
+     * a kernel config. mac is the Wi-Fi's own MAC, empty when it cannot be read.
      */
-    suspend fun isTtlFixSupported(): Boolean = withContext(Dispatchers.IO) {
-        Shell.cmd("${Backend.startAp} caps 2>/dev/null").exec().out.any { it.trim() == "ttl=1" }
+    suspend fun getCaps(): Map<String, String> = withContext(Dispatchers.IO) {
+        Shell.cmd("${Backend.startAp} caps 2>/dev/null").exec().out
+            .map { it.trim().split("=", limit = 2) }
+            .filter { it.size == 2 }
+            .associate { it[0] to it[1] }
     }
 
     suspend fun getInterfaces(): List<NetworkIface> = withContext(Dispatchers.IO) {
