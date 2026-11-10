@@ -170,7 +170,7 @@ void print_usage(const char *prog) {
          "\nstart options:\n",
          prog, prog, prog, prog, prog, prog, prog, prog);
   /* Start order, the one people read, not ap.conf's. */
-  static const char order[] = "spobcWgdwHAMKmT6a";
+  static const char order[] = "spobcWgdwHAMKmGuT6a";
   for (const char *f = order; *f; f++) {
     const struct vap_key *k = by_flag(*f);
     if (!k)
